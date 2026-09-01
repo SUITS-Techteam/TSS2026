@@ -12,7 +12,7 @@
 // UDP command mapping structure
 typedef struct {
     unsigned int command;
-    const char* path;        // full dot-separated path like "rover.pr_telemetry.brakes"
+    const char* path;        // full dot-separated path like "eva.uia.eva1_power"
     const char* data_type;   // bool or float, this makes the parsing easier
 } udp_command_mapping_t;
 
@@ -21,10 +21,6 @@ struct backend_data_t {
     uint32_t start_time;
     uint32_t server_up_time;
     uint32_t time_since_last_ping;
-
-    // DUST rover simulation
-    int running_pr_sim;
-    bool pr_sim_paused;
 
     // Simulation engine
     sim_engine_t* sim_engine;
@@ -41,7 +37,6 @@ bool handle_udp_post_request(unsigned int command, unsigned char* data, struct b
 
 // Data management
 bool initialize_json_switch_states(void);
-bool initialize_ROVER_json_switch_states(void);
 bool initialize_EVA_json_switch_states(void);
 bool initialize_LTV_ERRORS_json_switch_states(void);
 void update_json_file(const char* filename, const char* section, const char* field_path, char* new_value);
@@ -79,32 +74,8 @@ bool extract_bool_value(unsigned char* data);
 float extract_float_value(unsigned char* data);
 
 // UDP command to JSON path mapping table
-// NOTE: see server.h for command definitions to send to DUST Unreal Engine simulation
-// NOTE: most of these commands have been reused from the TSS 2025 project to help support backwards compatibility. In the future, it may be reccomended to standardize these.
+// NOTE: most of these commands have been reused from the TSS 2025 project to help support backwards compatibility. In the future, it may be recommended to standardize these.
 static const udp_command_mapping_t udp_command_mappings[] = {
-    // ROVER commands (sent to/from the DUST Unreal Engine simulation over UDP)
-    {1103, "rover.pr_telemetry.cabin_heating", "bool"},
-    {1104, "rover.pr_telemetry.cabin_cooling", "bool"},
-    {1105, "rover.pr_telemetry.co2_scrubber", "bool"},
-    {1106, "rover.pr_telemetry.lights_on", "bool"},
-
-    {1107, "rover.pr_telemetry.brakes", "bool"},
-    {1109, "rover.pr_telemetry.throttle", "float"},
-    {1110, "rover.pr_telemetry.steering", "float"},
-    {1111, "rover.pr_telemetry.rover_pos_x", "float"},
-    {1112, "rover.pr_telemetry.rover_pos_y", "float"},
-    {1113, "rover.pr_telemetry.rover_pos_z", "float"},
-    {1114, "rover.pr_telemetry.heading", "float"},
-    {1115, "rover.pr_telemetry.pitch", "float"},
-    {1116, "rover.pr_telemetry.roll", "float"},
-    {1117, "rover.pr_telemetry.distance_traveled", "float"},
-    {1118, "rover.pr_telemetry.speed", "float"},
-    {1119, "rover.pr_telemetry.surface_incline", "float"},
-
-    {1130, "rover.pr_telemetry.lidar", "array<float>"}, // LiDAR is float array, this data type is handled separately in server.c
-    {1131, "rover.pr_telemetry.sunlight", "float"},
-    {1132, "ltv.signal.strength", "float"},
-
     // UIA commands (sent from the peripheral device over UDP)
     {2001, "eva.uia.eva1_power", "bool"},
     {2002, "eva.uia.eva1_oxy", "bool"},
@@ -142,11 +113,6 @@ static const udp_command_mapping_t udp_command_mappings[] = {
     {2028, "ltv_errors.error_procedures.5.needs_resolved", "bool"},
     {2029, "ltv_errors.error_procedures.6.needs_resolved", "bool"},
     {2030, "ltv_errors.error_procedures.7.needs_resolved", "bool"},
-
-    
-    // Ping LTV command
-    {2050, "ltv.signal.ping_requested", "bool"},
-    {2051, "ltv.signal.ping_unlimited_requested", "bool"},
 
     {0, NULL, NULL} // Sentinel
 };

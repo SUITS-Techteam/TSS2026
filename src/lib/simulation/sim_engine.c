@@ -88,8 +88,7 @@ bool sim_engine_load_predefined_configs(sim_engine_t* engine) {
     // @TODO can generalize this more in some way?
     const char* config_files[] = {
         SIM_CONFIG_ROOT "/eva1.json",
-        SIM_CONFIG_ROOT "/eva2.json",
-        SIM_CONFIG_ROOT "/rover.json"
+        SIM_CONFIG_ROOT "/eva2.json"
     };
     const int config_count = sizeof(config_files) / sizeof(config_files[0]);
     
@@ -152,7 +151,7 @@ bool sim_engine_load_component(sim_engine_t* engine, const char* json_file_path)
         return false;
     }
     
-    // Extract component name e.g. "eva", "rover"
+    // Extract component name e.g. "eva"
     cJSON* component_name_json = cJSON_GetObjectItem(root, "component_name");
     if (!component_name_json || !cJSON_IsString(component_name_json)) {
         printf("Error: Missing component_name in file: %s\n", json_file_path);
@@ -564,7 +563,7 @@ void sim_engine_update(sim_engine_t* engine, float delta_time) {
  * Starts simulation updates for a specific component.
  *
  * @param engine Pointer to the simulation engine
- * @param component_name Name of the component to start (e.g., "rover", "eva1", "eva2")
+ * @param component_name Name of the component to start (e.g., "eva1", "eva2")
  */
 void sim_engine_start_component(sim_engine_t* engine, const char* component_name) {
     if (!engine || !engine->initialized || !component_name) return;
@@ -584,7 +583,7 @@ void sim_engine_start_component(sim_engine_t* engine, const char* component_name
  * Stops simulation updates for a specific component.
  *
  * @param engine Pointer to the simulation engine
- * @param component_name Name of the component to stop (e.g., "rover", "eva1", "eva2")
+ * @param component_name Name of the component to stop (e.g., "eva1", "eva2")
  */
 void sim_engine_stop_component(sim_engine_t* engine, const char* component_name) {
     if (!engine || !component_name) return;
@@ -605,7 +604,7 @@ void sim_engine_stop_component(sim_engine_t* engine, const char* component_name)
  * For external value fields with reset_value, calls the provided update_json function to update the data file.
  *
  * @param engine Pointer to the simulation engine
- * @param component_name Name of the component to reset (e.g., "rover", "eva1", "eva2")
+ * @param component_name Name of the component to reset (e.g., "eva1", "eva2")
  * @param update_json Function pointer to update JSON files (e.g., update_json_file from data.c)
  */
 void sim_engine_reset_component(sim_engine_t* engine, const char* component_name,

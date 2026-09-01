@@ -35,8 +35,6 @@ struct backend_data_t *init_backend() {
     backend->start_time = time(NULL);
     backend->server_up_time = 0;
     backend->time_since_last_ping = 0;
-    backend->running_pr_sim = -1;
-    backend->pr_sim_paused = false;
 
     // Initialize simulation engine
     backend->sim_engine = sim_engine_create();
@@ -74,78 +72,10 @@ struct backend_data_t *init_backend() {
 * @return true if initialization was successful, false otherwise
 */
 bool initialize_json_switch_states() {
-    bool rover_init = initialize_ROVER_json_switch_states();
     bool eva_init = initialize_EVA_json_switch_states();
     bool ltv_errors_init = initialize_LTV_ERRORS_json_switch_states();
 
-    return rover_init && eva_init && ltv_errors_init;
-}
-
-
-
-/** 
-* Initializes JSON switch states in ROVER.json file
-* @return true if initialization was successful, false otherwise
-*/
-bool initialize_ROVER_json_switch_states() {
-    //make all Rover switch states false by default
-    cJSON* rover_json = get_json_file("ROVER");
-    if (!rover_json) {
-        printf("Error: Failed to load ROVER config file in initialize_json_switch_states\n");
-        return false;
-    }
-
-    //get pr telemetry from Rover JSON file
-    cJSON* pr_telemetry = cJSON_GetObjectItem(rover_json, "pr_telemetry");
-    if (!pr_telemetry) {
-        printf("Error: Failed to get pr_telemetry from ROVER config file in initialize_json_switch_states\n");
-        cJSON_Delete(rover_json);
-        return false;
-    }
-
-    //change cabin heating to false
-    cJSON_ReplaceItemInObject(pr_telemetry, "cabin_heating", cJSON_CreateBool(0));
-    if (!cJSON_GetObjectItem(pr_telemetry, "cabin_heating")) {
-        printf("Error: Failed to set cabin_heating in ROVER config file in initialize_json_switch_states\n");
-        cJSON_Delete(rover_json);
-        return false;
-    }
-
-    //change cabin cooling to false
-    cJSON_ReplaceItemInObject(pr_telemetry, "cabin_cooling", cJSON_CreateBool(0));
-    if (!cJSON_GetObjectItem(pr_telemetry, "cabin_cooling")) {
-        printf("Error: Failed to set cabin_cooling in ROVER config file in initialize_json_switch_states\n");
-        cJSON_Delete(rover_json);
-        return false;
-    }
-
-    //change headlights on to false
-    cJSON_ReplaceItemInObject(pr_telemetry, "lights_on", cJSON_CreateBool(0));
-    if (!cJSON_GetObjectItem(pr_telemetry, "lights_on")) {
-        printf("Error: Failed to set lights_on in ROVER config file in initialize_json_switch_states\n");
-        cJSON_Delete(rover_json);
-        return false;
-    }
-
-    //write to JSON file
-    char *json_string = cJSON_Print(rover_json);
-
-    FILE *file = fopen("data/ROVER.json", "w");
-    if (!file) {
-        printf("Error opening ROVER.json for writing\n");
-        free(json_string);
-        cJSON_Delete(rover_json);
-        return false;
-    }
-
-    fprintf(file, "%s", json_string);
-    fclose(file);
-
-    free(json_string);
-    cJSON_Delete(rover_json);
-
-    return true;
-
+    return eva_init && ltv_errors_init;
 }
 
 /** 
@@ -318,7 +248,6 @@ bool initialize_EVA_json_switch_states() {
         cJSON_Delete(eva_json);
         return false;
     }
-
 
     //write to JSON file
     char *json_string = cJSON_Print(eva_json);
@@ -588,63 +517,6 @@ void update_fan_values(sim_engine_t* sim_engine) {
             }
         }
     }
-}
-
-
-/**
-* Adjusts cabin temperature based on Cabin Heating and Cabin Cooling commands and updates JSON file accordingly
-* @param sim_engine Pointer to the simulation engine to update
-*/
-
-void cabin_temperature_control(sim_engine_t* sim_engine) {
-    if (!sim_engine) {
-         return;
-     }
-
-    sim_component_t* rover = sim_engine_get_component(sim_engine, "rover");
-    if (rover == NULL) {
-        printf("Simulation tried to access non-existent component 'rover' for cabin temperature control\n");
-         return;
-    }
-
-    sim_field_t* cabin_temperature_field = sim_engine_find_field_within_component(rover, "cabin_temperature");
-    if (cabin_temperature_field == NULL) {
-        printf("Simulation tried to access non-existent field 'rover.cabin_temperature' for cabin temperature control\n");
-         return;
-    }
-
-    sim_field_t* cabin_temperature_target_field = sim_engine_find_field_within_component(rover, "cabin_temperature_target");
-    if (cabin_temperature_target_field == NULL) {
-        printf("Simulation tried to access non-existent field 'rover.cabin_temperature_target' for cabin temperature control\n");
-         return;
-    }
-
-    sim_field_t* cabin_heating = sim_engine_find_field_within_component(rover, "cabin_heating");
-    if (cabin_heating == NULL) {
-        printf("Simulation tried to access non-existent field 'rover.cabin_heating' for cabin temperature control\n");
-         return;
-    }
-
-    sim_field_t* cabin_cooling = sim_engine_find_field_within_component(rover, "cabin_cooling");
-    if (cabin_cooling == NULL) {
-        printf("Simulation tried to access non-existent field 'rover.cabin_cooling' for cabin temperature control\n");
-         return;
-    }
-
-    //check if the current temperature is above or below the target temperature
-    if (cabin_temperature_field->current_value.f < cabin_temperature_target_field->current_value.f) { //below target
-        //decrease temperature by setting algorithm to linear decay until it reaches the target temperature, then set to constant value to keep it at the target temperature
-        cabin_temperature_field->algorithm = SIM_ALGO_LINEAR_GROWTH;
-        cabin_temperature_field->max_value.f = cabin_temperature_target_field->current_value.f;
-    } else if (cabin_temperature_field->current_value.f > cabin_temperature_target_field->current_value.f) { //above target
-        cabin_temperature_field->algorithm = SIM_ALGO_LINEAR_DECAY;
-        cabin_temperature_field->min_value.f = cabin_temperature_target_field->current_value.f;
-    } else {
-        cabin_temperature_field->algorithm = SIM_ALGO_CONSTANT_VALUE;
-        cabin_temperature_field->current_value.f = cabin_temperature_target_field->current_value.f; //at target, set current value to target value to avoid any floating point discrepancies
-    }
-
-
 }
 
 /**
@@ -1134,61 +1006,6 @@ void update_scrubber_state_EVA(sim_engine_t* sim_engine) {
     }
 }
 
-
-/**
-* switches between which ROVER scrubber is increasing linearly and decreasing linearly based on the current DCU command for CO2 scrubber.
-* also switches whether suit_pressure_co2 is increasing or decreasing based on scrubber value and DCU command, to simulate the relationship between CO2 scrubber performance and suit CO2 pressure.
-* If the DCU command for CO2 scrubber is set to true, scrubber_a_co2_storage will be set to linear_growth and scrubber_b_co2_storage will be set to linear_decay.
-* If the DCU command for CO2 scrubber is set to false, scrubber_a_co2_storage will be set to linear_decay and scrubber_b_co2_storage will be set to linear_growth.
-* If the increasing scrubber co2 storage value is above 30, the suit_pressure_co2 field will be set to linear_growth, simulating a buildup of CO2 in the suit due to poor scrubber performance. 
-* If the increasing scrubber co2 storage value is below 30, the suit_pressure_co2 field will be set to linear_decay, simulating effective CO2 scrubbing and a decrease in suit CO2 pressure.
-* @param sim_engine Pointer to the simulation engine to update
-*/
-void update_scrubber_state_ROVER(sim_engine_t* sim_engine) {
-    if (!sim_engine) {
-        return;
-    }
-
-    sim_component_t* rover = sim_engine_get_component(sim_engine, "rover");
-    if (rover == NULL) {
-        printf("Simulation tried to access non-existent component 'rover' for scrubber error state update\n");
-        return;
-    }
-
-    sim_field_t* scrubber_a_field = sim_engine_find_field_within_component(rover, "scrubber_a_co2_storage");
-    sim_field_t* scrubber_b_field = sim_engine_find_field_within_component(rover, "scrubber_b_co2_storage");
-    sim_field_t* suit_co2_pressure_field = sim_engine_find_field_within_component(rover, "suit_pressure_co2");
-
-    if (scrubber_a_field == NULL || scrubber_b_field == NULL || suit_co2_pressure_field == NULL) {
-        printf("Simulation tried to access non-existent scrubber or suit pressure fields for scrubber error state update\n");
-        return;
-    }
-
-    if (sim_engine->dcu_field_settings->co2 == true) {
-        scrubber_a_field->algorithm = SIM_ALGO_LINEAR_GROWTH;
-        scrubber_b_field->algorithm = SIM_ALGO_LINEAR_DECAY;
-    } else {
-        scrubber_a_field->algorithm = SIM_ALGO_LINEAR_DECAY;
-        scrubber_b_field->algorithm = SIM_ALGO_LINEAR_GROWTH;
-    }
-
-    
-
-    //if the increasing scrubber co2 storage value is above 30, set suit_pressure_co2 to linear growth, otherwise set it to linear decay
-    if ((scrubber_a_field->algorithm == SIM_ALGO_LINEAR_GROWTH && scrubber_a_field->current_value.f > 30.0f) || (scrubber_b_field->algorithm == SIM_ALGO_LINEAR_GROWTH && scrubber_b_field->current_value.f > 30.0f)) {
-        suit_co2_pressure_field->algorithm = SIM_ALGO_LINEAR_GROWTH;
-    } else {
-        suit_co2_pressure_field->algorithm = SIM_ALGO_LINEAR_DECAY;
-    } 
-
-    //update scrubber_error state in JSON file based on scrubber performance
-    if ((scrubber_a_field->current_value.f > 60.0f && sim_engine->dcu_field_settings->co2 == true) || (scrubber_b_field->current_value.f > 60.0f && sim_engine->dcu_field_settings->co2 == false)) {
-        update_json_file("EVA", "error", "scrubber_error", "true");
-    } else {
-        update_json_file("EVA", "error", "scrubber_error", "false");
-    }
-}
-
 /**
 * updates the fan error states based on the current DCU field settings and fan value.
 * If the DCU command for the fan is set to false, the fan error states will be set to false (no error).
@@ -1315,9 +1132,6 @@ void increment_simulation(struct backend_data_t *backend) {
 
         // if UIA is connected, update the simulation values based on UIA states and ingress/egress procedures
         if(backend->sim_engine) {
-           
-            
-
             // Update simulation engine with elapsed time
             float delta_time = 1.0f;  // 1 second per update
 
@@ -1329,7 +1143,6 @@ void increment_simulation(struct backend_data_t *backend) {
             update_error_states(backend->sim_engine);
             update_fan_values(backend->sim_engine);
             update_sim_UIA_connected(backend->sim_engine);
-            cabin_temperature_control(backend->sim_engine);
             sim_engine_update(backend->sim_engine, delta_time);
             update_ltv_error_dependencies();
             update_num_remaining_errors_LTV(backend->sim_engine);
@@ -1466,19 +1279,11 @@ void send_recovery_mode_json_file(const char* filename, unsigned char* data) {
 void handle_udp_get_request(unsigned int command, unsigned char* data, struct backend_data_t* backend) {
     // Handle different GET requests
     switch (command) {
-        case 0: // ROVER telemetry
-            printf("Getting ROVER telemetry data.\n");
-            send_json_file("ROVER", data);
-            break;
-        case 1: // EVA telemetry
+        case 0: // EVA telemetry
             printf("Getting EVA telemetry data.\n");
             send_json_file("EVA", data);
             break;
-        case 2: // LTV data
-            printf("Getting LTV telemetry data.\n");
-            send_json_file("LTV", data);
-            break;
-        case 3: //LTV_ERRORS data
+        case 1: //LTV_ERRORS data
             //only print this data if the Recovery Mode is resolved
             if(is_recovery_mode_resolved()) {
                 printf("Getting LTV error data.\n");
@@ -1867,63 +1672,6 @@ void sync_simulation_to_json(struct backend_data_t* backend) {
     
     free(json_str);
     cJSON_Delete(root);
-    
-    // Now sync rover data to ROVER.json
-    cJSON* rover_root = get_json_file("ROVER");
-    if (rover_root == NULL) {
-        printf("Error: Could not load ROVER.json\n");
-        return;
-    }
-    
-    // Get or create the pr_telemetry section
-    cJSON* pr_telemetry = cJSON_GetObjectItemCaseSensitive(rover_root, "pr_telemetry");
-    if (pr_telemetry == NULL) {
-        pr_telemetry = cJSON_CreateObject();
-        cJSON_AddItemToObject(rover_root, "pr_telemetry", pr_telemetry);
-    }
-
-    // Update simulation running status in pr_telemetry (check if rover is running)
-    bool rover_running = sim_engine_is_component_running(engine, "rover");
-    cJSON* rover_sim_running_field = cJSON_GetObjectItemCaseSensitive(pr_telemetry, "sim_running");
-    if (rover_sim_running_field != NULL) {
-        cJSON_SetBoolValue(rover_sim_running_field, rover_running);
-    } else {
-        cJSON_AddBoolToObject(pr_telemetry, "sim_running", rover_running);
-    }
-    
-    // Update rover simulation fields (skip external_value fields as they are inputs, not outputs)
-    for (int i = 0; i < engine->total_field_count; i++) {
-        sim_field_t* field = engine->update_order[i];
-        if (field != NULL && strcmp(field->component_name, "rover") == 0) {
-            // Skip external_value fields - these are inputs from JSON, not outputs to JSON
-            if (field->algorithm == SIM_ALGO_EXTERNAL_VALUE) {
-                continue;
-            }
-
-            double value = field->current_value.f;
-
-            // Check if field already exists and replace it, otherwise add new
-            cJSON* existing_field = cJSON_GetObjectItemCaseSensitive(pr_telemetry, field->field_name);
-            if (existing_field != NULL) {
-                cJSON_SetNumberValue(existing_field, value);
-            } else {
-                cJSON_AddNumberToObject(pr_telemetry, field->field_name, value);
-            }
-        }
-    }
-    
-    // Write ROVER file
-    snprintf(filepath, sizeof(filepath), "data/ROVER.json");
-    
-    char* rover_json_str = cJSON_Print(rover_root);
-    FILE* rover_fp = fopen(filepath, "w");
-    if (rover_fp) {
-        fputs(rover_json_str, rover_fp);
-        fclose(rover_fp);
-    }
-    
-    free(rover_json_str);
-    cJSON_Delete(rover_root);
 }
 
 void backend_reset_errors(void* ctx) {
@@ -2008,15 +1756,13 @@ bool html_form_json_update(char* request_content, struct backend_data_t* backend
     const char* filename = NULL;
     if (strcmp(route_parts[0], "eva") == 0) {
         filename = "EVA";
-    } else if (strcmp(route_parts[0], "rover") == 0) {
-        filename = "ROVER";
     } else if (strcmp(route_parts[0], "ltv") == 0) {
         filename = "LTV";
     } else if (strcmp(route_parts[0], "ltv_errors") == 0) {
         filename = "LTV_ERRORS";
     } 
     else {
-        printf("Error: Unsupported file type '%s'. Use 'eva', 'rover', 'ltv_errors', or 'ltv'\n", route_parts[0]);
+        printf("Error: Unsupported file type '%s'. Use 'eva', 'ltv_errors', or 'ltv'\n", route_parts[0]);
         return false;
     }
     
@@ -2028,19 +1774,6 @@ bool html_form_json_update(char* request_content, struct backend_data_t* backend
         const char* field = route_parts[2];
         
         update_json_file(filename, section, field, value);
-
-        // Handle simulation control for specific fields
-        if (strcmp(filename, "ROVER") == 0 && strcmp(section, "pr_telemetry") == 0 && strcmp(field, "sim_running") == 0) {
-            if (backend->sim_engine) {
-                if (strcmp(value, "true") == 0) {
-                    sim_engine_start_component(backend->sim_engine, "rover");
-                    printf("Started rover simulation\n");
-                } else {
-                    sim_engine_reset_component(backend->sim_engine, "rover", update_json_file);
-                    printf("Reset rover simulation\n");
-                }
-            }
-        }
 
         if (strcmp(filename, "EVA") == 0 && strcmp(section, "status") == 0 && strcmp(field, "started") == 0) {
             if (backend->sim_engine) {
@@ -2075,19 +1808,6 @@ bool html_form_json_update(char* request_content, struct backend_data_t* backend
         // For now, handle nested updates by directly updating the JSON
         // This requires extending update_json_file to handle nested paths
         update_json_file(filename, section, nested_field, value);
-
-        // Handle simulation control for specific nested fields
-        if (strcmp(filename, "ROVER") == 0 && strcmp(section, "pr_telemetry") == 0 && strcmp(nested_field, "sim_running") == 0) {
-            if (backend->sim_engine) {
-                if (strcmp(value, "true") == 0) {
-                    sim_engine_start_component(backend->sim_engine, "rover");
-                    printf("Started rover simulation\n");
-                } else {
-                    sim_engine_reset_component(backend->sim_engine, "rover", update_json_file);
-                    printf("Reset rover simulation\n");
-                }
-            }
-        }
 
         return true;
     } else {
@@ -2177,7 +1897,7 @@ void update_sim_DCU_field_settings(sim_engine_t* sim_engine) {
 /**
  * Gets a field value from a JSON file using a dot-separated path
  *
- * @param filename Name of the JSON file (e.g., "ROVER", "EVA")
+ * @param filename Name of the JSON file (e.g. "EVA")
  * @param field_path Dot-separated path to the field (e.g., "pr_telemetry.brakes" or "telemetry.eva1.batt")
  * @param default_value Default value to return if field is not found or invalid
  * @return Field value as double, or default_value if not found

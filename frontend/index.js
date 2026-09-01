@@ -1,7 +1,5 @@
 // GLOBAL VARIABLES
 let connectionFails = 0; // number of consecutive connection failures, resets on successful fetch
-let dustConnected = false; // tracks DUST/Unreal Engine connection status
-
 
 
 /**
@@ -15,7 +13,6 @@ function onload() {
     fetchData();
     updateClock();
     updateTelemetryStatus();
-    updateDustStatus();
   }, 1000);
 
 
@@ -26,44 +23,36 @@ function onload() {
 // DATA MANAGEMENT
 
 /**
- * Fetches the latest EVA and ROVER data and updates the DOM elements accordingly.
+ * Fetches the latest EVA  data and updates the DOM elements accordingly.
  * In the html, there is a data-path attribute on the elements that basically registers that field as needing to be updated with data from the server
- * The path specifies where in the JSON data the value can be found, e.g. "eva.telemetry.eva1.temperature" or "rover.pr_telemetry.battery_voltage"
+ * The path specifies where in the JSON data the value can be found, e.g. "eva.telemetry.eva1.temperature"
  *
- * Note: this is a bit of a hodgepodge to mantain backwards compatibility with the old system e.g. timers, boolean switches, etc
+ * Note: this is a bit of a hodgepodge to maintain backwards compatibility with the old system e.g. timers, boolean switches, etc
  */
 async function fetchData() {
-  let evaData, roverData, ltvData, ltvErrorsData;
+  let evaData, ltvErrorsData;
 
   try {
     // Create abort controllers with 1 second timeout
     const evaController = new AbortController();
-    const roverController = new AbortController();
-    const ltvController = new AbortController();
     const ltvErrorsController = new AbortController();
 
     const timeoutIds = [
       setTimeout(() => evaController.abort(), 2000),
-      setTimeout(() => roverController.abort(), 2000),
-      setTimeout(() => ltvController.abort(), 2000),
       setTimeout(() => ltvErrorsController.abort(), 2000),
     ];
 
-    // Fetch EVA, ROVER, and LTV data simultaneously
-    const [evaResponse, roverResponse, ltvResponse, ltvErrorsResponse] = await Promise.all([
+    // Fetch EVA, and LTV data simultaneously
+    const [evaResponse, ltvErrorsResponse] = await Promise.all([
       fetch(`/data/EVA.json`, { signal: evaController.signal }),
-      fetch(`/data/ROVER.json`, { signal: roverController.signal }),
-      fetch(`/data/LTV.json`, { signal: ltvController.signal }),
       fetch(`/data/LTV_ERRORS.json`, { signal: ltvErrorsController.signal }),
     ]);
 
     // Clear timeouts on successful response
     timeoutIds.forEach((id) => clearTimeout(id));
 
-    [evaData, roverData, ltvData, ltvErrorsData] = await Promise.all([
+    [evaData, ltvErrorsData] = await Promise.all([
       evaResponse.json(),
-      roverResponse.json(),
-      ltvResponse.json(),
       ltvErrorsResponse.json(),
     ]);
 
@@ -71,16 +60,13 @@ async function fetchData() {
     evaStarted = evaData?.status?.started === true;
 
     connectionFails = 0;
-    dustConnected =
-      (roverData?.pr_telemetry?.dust_connected && connectionFails <= 2) ||
-      false;
   } catch (error) {
     console.error("Fatal error fetching data:", error);
     connectionFails++;
     return;
   }
 
-  // Update the EVA, ROVER, and LTV fields in the DOM
+  // Update the EVA fields in the DOM
   const elements = document.querySelectorAll("[data-path]");
   elements.forEach((el) => {
     const path = el.getAttribute("data-path");
@@ -89,26 +75,6 @@ async function fetchData() {
 
     if (path.startsWith("eva.")) {
       value = getNestedValue(evaData, path.slice(4));
-    }
-
-    if (path.startsWith("rover.")) {
-      value = getNestedValue(roverData, path.slice(6));
-    }
-
-    if (path.startsWith("ltv.")) {
-      value = getNestedValue(ltvData, path.slice(4));
-    }
-
-    if (path.startsWith("ltv_errors.")) {
-      value = getNestedValue(ltvErrorsData, path.slice(11));
-    }
-
-    // Special handling for signal strength
-    if (path === "ltv.signal.strength") {
-      if (value === 1.00) {
-        el.textContent = "NOT IN RANGE";
-        return;
-      }
     }
 
     // Handle checkboxes/switches (set checked property for boolean values)
@@ -159,7 +125,7 @@ async function fetchData() {
 /**
  * Updates the server with the new value for a specific field using data-path format
  *
- * @param path Data path (e.g., "eva.dcu.eva1.batt" or "rover.status.started")
+ * @param path Data path (e.g., "eva.dcu.eva1.batt")
  * @param value New value for the field
  */
 async function updateServerData(path, value) {
@@ -211,36 +177,9 @@ async function setupEventListeners() {
     button.addEventListener("click", (event) => {
       const path = event.target.getAttribute("data-path");
       const action = event.target.getAttribute("data-action");
-
-
-    // Only apply 5-second cooldown to limited ping button
-    if (event.target.classList.contains("btn-ping")) {
-      const now = Date.now();
-      if (!window.lastPingTime) window.lastPingTime = 0;
-      if (now - window.lastPingTime < 20000) {
-        console.log("Ping ignored: 20-second cooldown");
-        event.preventDefault();
-        return; // stop here if still in cooldown
-      }
-
-      window.lastPingTime = now;
-      event.target.disabled = true;
-      setTimeout(() => { event.target.disabled = false; }, 5000);
-    }
-
-
+      
       // For action buttons, directly update the status field
       if (action === "start") {
-        // Special handler to only allow pinging when the DUST sim is connected, @TODO see if this can be generalized later
-        if (path === "ltv.signal.ping_requested" || path === "ltv.signal.ping_unlimited_requested") {
-          if (!dustConnected) {
-            alert(
-              "DUST simulator is not connected. Please refer to TSS documentation for learning how to connect to the simulator."
-            );
-            return;
-          }
-        }
-
         // Start: set the field to true
         updateServerData(path, true);
       } else if (action === "reset") {
@@ -349,17 +288,5 @@ function updateTelemetryStatus() {
       : "Telemetry Disconnected";
     statusElement.innerHTML = `● ${statusText}`;
     statusElement.style.color = isConnected ? "#28ae5f" : "#d82121ff";
-  }
-}
-
-/**
- * Updates the DUST connection status indicator in the navigation bar
- */
-function updateDustStatus() {
-  const statusElement = document.getElementById("dust-status");
-  if (statusElement) {
-    const statusText = dustConnected ? "DUST Connected" : "DUST Disconnected"; // make sure that TSS is connected too to show that DUST is connected
-    statusElement.innerHTML = `● ${statusText}`;
-    statusElement.style.color = dustConnected ? "#28ae5f" : "#3889abff";
   }
 }

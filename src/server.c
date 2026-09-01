@@ -7,8 +7,6 @@ static bool debug_mode = false;
 static bool continue_server(void);
 static void get_contents(char *buffer, unsigned int *time, unsigned int *command,
                          unsigned char *data, int packet_size);
-static void tss_to_unreal(SOCKET socket, struct sockaddr_in address, socklen_t len,
-                          struct backend_data_t *backend);
 void tss_to_ltv(SOCKET socket, struct sockaddr_in address, socklen_t len,
                           struct backend_data_t *backend);
 void tss_to_ltv_error(SOCKET socket, struct sockaddr_in address, socklen_t len, struct backend_data_t *backend, unsigned int error_index, unsigned int resolved);
@@ -42,9 +40,6 @@ int main(int argc, char *argv[]) {
         }
     #endif
 
-    // Set initial time for Unreal updates
-    double time_begin = get_wall_clock(&profile_context);
-
     // Fetch server hostname and port to bind to
     char hostname[16];
     char port[6] = "14141";
@@ -56,13 +51,9 @@ int main(int argc, char *argv[]) {
     SOCKET server;
     SOCKET udp_socket;
 
-    struct sockaddr_in unreal_addr;
-    socklen_t unreal_addr_len;
     struct sockaddr_in ltv_addr;
     struct sockaddr_in *ltv_addr_ptr;
     socklen_t ltv_addr_len;
-    bool unreal = false;
-    double last_dust_message_time = 0.0;
 
     server = create_tcp_socket(hostname, port);
     udp_socket = create_udp_socket(hostname, port);
@@ -146,7 +137,7 @@ int main(int argc, char *argv[]) {
             // @TODO the code below could definitely be simplified further, although for the sake of clarity it's left as is for now
 
             // Process UDP command based on command range
-            if (command < 1000) {  // GET & DUST requests
+            if (command < 1000) {  // GET requests
                 unsigned char *response_buffer;
                 int buffer_size = 0;
 
@@ -175,37 +166,7 @@ int main(int argc, char *argv[]) {
                 // UDP requests are one-off, so drop client after the response
                 drop_udp_client(&udp_clients, client);
                 free(response_buffer);
-            } else if (command == 1130) { // LIDAR
-                // Handle LIDAR data separately due to larger packet size (array of floats instead of single float value)
-                float lidar_data[LIDAR_NUM_POINTS];
-
-                // Fetch all bytes after the timestamp and command (bytes 8 onward) and save that as the float array
-                memcpy(lidar_data, client->udp_request + 8, sizeof(lidar_data));
-
-                // Convert from big-endian if on little-endian system
-                if (!big_endian()) {
-                    // we already reversed the first set of bytes above, so start at 1
-                    for (int i = 1; i < LIDAR_NUM_POINTS; i++) {
-                        reverse_bytes((unsigned char *)&lidar_data[i]);
-                    }
-                }
-
-                // Format as JSON array string: "[1.5,2.3,4.1,...]"
-                char json_array[512];
-                int offset = snprintf(json_array, sizeof(json_array), "[");
-                for (int i = 0; i < LIDAR_NUM_POINTS; i++) {
-                    if (i < LIDAR_NUM_POINTS - 1) {
-                        offset += snprintf(json_array + offset, sizeof(json_array) - offset, "%.2f,", lidar_data[i]);
-                    } else {
-                        offset += snprintf(json_array + offset, sizeof(json_array) - offset, "%.2f]", lidar_data[i]);
-                    }
-                }
-
-                // Update ROVER JSON with new LiDAR data
-                update_json_file("ROVER", "pr_telemetry", "lidar", json_array);
-
-                drop_udp_client(&udp_clients, client);
-            } else if (command < 3000) {  // POST requests, primarily the TSS peripherals and DUST simulator (1000-2999)
+            } else if (command < 3000) {  // POST requests, primarily the TSS peripherals
                 bool result = handle_udp_post_request(command, (unsigned char *)data, backend);
                 
                 //send false if pinged too early
@@ -220,16 +181,6 @@ int main(int argc, char *argv[]) {
                        (struct sockaddr *)&client->udp_addr, client->address_length);
 
                 drop_udp_client(&udp_clients, client);
-            } else if (command == 3000) {  // Unreal Engine registration (DUST simulation)
-                // This command number is sent every second, registering as a "heartbeat" for Unreal so we can display a connected status
-
-                // Set the Unreal Engine IP address so that can forward commands like brakes and throttle to the simulation
-                unreal_addr = client->udp_addr;
-                unreal_addr_len = client->address_length;
-                unreal = true;
-                last_dust_message_time = get_wall_clock(&profile_context);
-
-                drop_udp_client(&udp_clients, client);
             } else if (command == 4000) {  // LTV Task Board registration
                 server_ctx.ltv_addr = client->udp_addr;
                 server_ctx.ltv_addr_len = client->address_length;
@@ -241,24 +192,6 @@ int main(int argc, char *argv[]) {
                 drop_udp_client(&udp_clients, client);
             } else {  // Unknown command
                 drop_udp_client(&udp_clients, client);
-            }
-        }
-
-        // Send periodic telemetry updates to Unreal Engine to sync TSS rover control values with the simulation
-        if (unreal) {
-            double time_end = get_wall_clock(&profile_context);
-            double time_diff = time_end - time_begin;
-
-            if (time_diff > UNREAL_UPDATE_INTERVAL_SEC) {
-                tss_to_unreal(udp_socket, unreal_addr, unreal_addr_len, backend);
-                time_begin = time_end;
-            }
-
-            double time_since_last_message = time_end - last_dust_message_time;
-            if (time_since_last_message > 3.0) { // timeout after 3 seconds
-                update_json_file("ROVER", "pr_telemetry", "dust_connected", "false");
-            } else {
-                update_json_file("ROVER", "pr_telemetry", "dust_connected", "true");
             }
         }
 
@@ -494,114 +427,6 @@ printf("ltv_addr.sin_addr (raw): %s\n", inet_ntoa(s->ltv_addr.sin_addr));
 printf("=========================\n");
 }
 
-/**
- * Sends telemetry data to Unreal Engine via UDP packets.
- * Transmits rover state (brakes, lights, steering, throttle, switch) as separate packets.
- * 
- * @param socket UDP socket for transmission
- * @param address Unreal Engine's network address
- * @param len Length of address structure
- * @param backend Backend data containing rover state
- */
-static void tss_to_unreal(SOCKET socket, struct sockaddr_in address, socklen_t len,
-                          struct backend_data_t *backend) {
-    // Extract current rover state from JSON file
-    int brakes = (int)get_field_from_json("ROVER", "pr_telemetry.brakes", 0.0);
-    int lights_on = (int)get_field_from_json("ROVER", "pr_telemetry.lights_on", 0.0);
-    float steering = (float)get_field_from_json("ROVER", "pr_telemetry.steering", 0.0);
-    float throttle = (float)get_field_from_json("ROVER", "pr_telemetry.throttle", 0.0);
-    int ping = (int)get_field_from_json("LTV", "signal.ping_requested", 0.0);
-    int ping_unlimited = (int)get_field_from_json("LTV", "signal.ping_unlimited_requested", 0.0);
-
-    unsigned int time = backend->server_up_time;
-    unsigned char buffer[12];
-
-    // Convert packets to send in Big-Endian format
-    if (!big_endian()) {
-        // System is little-endian, convert to big-endian for UDP transmission
-        reverse_bytes((unsigned char *)&time);
-        reverse_bytes((unsigned char *)&steering);
-        reverse_bytes((unsigned char *)&throttle);
-        // ping, lights, and brakes are booleans (0 or 1) and don't need endian conversion
-    }
-
-    // Send brakes command
-    unsigned int command = TSS_TO_UNREAL_BRAKES_COMMAND;
-    if (!big_endian())
-        reverse_bytes((unsigned char *)&command);
-    memcpy(buffer, &time, 4);
-    memcpy(buffer + 4, &command, 4);
-    memcpy(buffer + 8, &brakes, 4);
-    sendto(socket, buffer, sizeof(buffer), 0, (struct sockaddr *)&address, len);
-
-    // Send lights command
-    command = TSS_TO_UNREAL_LIGHTS_COMMAND;
-    if (!big_endian())
-        reverse_bytes((unsigned char *)&command);
-    memcpy(buffer, &time, 4);
-    memcpy(buffer + 4, &command, 4);
-    memcpy(buffer + 8, &lights_on, 4);
-    sendto(socket, buffer, sizeof(buffer), 0, (struct sockaddr *)&address, len);
-
-    // Send steering command
-    command = TSS_TO_UNREAL_STEERING_COMMAND;
-    if (!big_endian())
-        reverse_bytes((unsigned char *)&command);
-    memcpy(buffer, &time, 4);
-    memcpy(buffer + 4, &command, 4);
-    memcpy(buffer + 8, &steering, 4);
-    sendto(socket, buffer, sizeof(buffer), 0, (struct sockaddr *)&address, len);
-
-    // Send throttle command
-    command = TSS_TO_UNREAL_THROTTLE_COMMAND;
-    if (!big_endian())
-        reverse_bytes((unsigned char *)&command);
-    memcpy(buffer, &time, 4);
-    memcpy(buffer + 4, &command, 4);
-    memcpy(buffer + 8, &throttle, 4);
-    sendto(socket, buffer, sizeof(buffer), 0, (struct sockaddr *)&address, len);
-
-    // Send ping to DUST only if it is true and time since last ping is at least 20 seconds
-    static int timeOfLastPing = -21;
-    backend->time_since_last_ping = backend->server_up_time - timeOfLastPing;
-    if (ping == true) {
-        backend->time_since_last_ping = backend->server_up_time - timeOfLastPing;
-        if (backend->time_since_last_ping >= 20) {
-            // Send ping command
-            command = TSS_TO_UNREAL_PING_COMMAND;
-
-            if (!big_endian())
-                reverse_bytes((unsigned char *)&command);
-
-            memcpy(buffer, &time, 4);
-            memcpy(buffer + 4, &command, 4);
-            memcpy(buffer + 8, &ping, 4);
-            sendto(socket, buffer, sizeof(buffer), 0, (struct sockaddr *)&address, len);
-            printf("Ping requested, sending Unreal ping command\n");
-            timeOfLastPing = backend->server_up_time;
-
-        } else {
-            printf("Ping requested, TOO EARLY to send Unreal ping command\n");
-        }
-
-        update_json_file("LTV", "signal", "ping_requested", "0");
-    }
-
-    if (ping_unlimited == true) {
-        // Send ping command
-        command = TSS_TO_UNREAL_PING_COMMAND;
-        if (!big_endian())
-            reverse_bytes((unsigned char *)&command);
-        memcpy(buffer, &time, 4);
-        memcpy(buffer + 4, &command, 4);
-        memcpy(buffer + 8, &ping_unlimited, 4);
-        sendto(socket, buffer, sizeof(buffer), 0, (struct sockaddr *)&address, len);
-
-        printf("Ping requested, sending Unreal ping command\n");
-        update_json_file("LTV", "signal", "ping_unlimited_requested", "0");
-    }
-}
-
 void tss_to_ltv_error(
     SOCKET socket,
     struct sockaddr_in address,
@@ -646,9 +471,9 @@ void tss_to_ltv_error(
  * Sends reset message to LTV Task Board via a UDP Message
  * 
  * @param socket UDP socket for transmission
- * @param address Unreal Engine's network address
+ * @param address Task Board's network address
  * @param len Length of address structure
- * @param backend Backend data containing rover state
+ * @param backend Backend data containing task board state
  */
 void tss_to_ltv(SOCKET socket, struct sockaddr_in address, socklen_t len,
                           struct backend_data_t *backend) {

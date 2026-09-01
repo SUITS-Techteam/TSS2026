@@ -20,10 +20,6 @@ The NASA SUITS project has taken on several iterations since its start in 2018. 
 
 TSS was developed for the NASA SUITS challenge with the goal of providing a reliable stream of data to participating teams to use within their interfaces and hardware designs. This started out with several basic linear decay and growth algorithms to model basic resource consumption, but has since been expanded to accommodate complex relationships between multiple telemetry values (e.g. EVA location values calculating speed, increasing heart rate). These complex telemetry relationships help to create a more realistic scenario for students to develop with.
 
-In the previous SUITS iteration, we added a new segment to the challenge to highlight the need of interfaces for a pressurized rover. Unlike the EVA, where teams could take advantage of AR hardware in the JSC Rock Yard, we knew that we could not use a physical rover as an asset during test week. This led to using [DUST](https://software.nasa.gov/software/MSC-27522-1), a simulation developed at NASA of the Lunar South Pole built in Unreal Engine.
-
-TSS now acts as a hub for communications with both teams and external assets, with all communications being proxied through the server. For example, if a team wants to control the pressurized rover in DUST, they will issue a command over UDP to the server, TSS will then send a response confirming the change and then relay that change to the DUST instance to change the throttle value of the rover. Proxying all of these requests allows us to maintain a level of consistency across the entire peripheral stack. Please reference the block diagram above to get a better idea of how these devices communicate with each other.
-
 ### Structure
 
 The project is separated into several folders:
@@ -41,8 +37,6 @@ _Primary interface for interacting with TSS_
 
 The frontend for TSS was developed in an extremely simple stack using HTML, CSS, and JavaScript. Through several iterations of the server, we have opted to keep the majority of the backend written in C. This meant that using more modern languages or libraries (e.g. React) would significantly complicate the development of the frontend.
 
-This year, we have gone through and consolidated all of the separate pages from previous designs and brought them all into one singular frontend. Each section has it's own "panel", and we have separated the unique segments of the challenge (EVA vs rover) into two separate columns to maintain a differentiator in the data being displayed.
-
 ### UI elements
 
 The frontend is built with a minimal interface and reusable styling. All of the style code is consolidated into a singular stylesheet file that is titled <a href="../frontend/index.css">index.css</a>. The styling has slowly morphed into a large file than was originally planned and could likely be due for refactoring and simplification.
@@ -58,9 +52,9 @@ The primary color scheme is:
 
 ### Data syncing
 
-Throughout the infrastructure, you'll note that we primarily use UDP sockets to communicate back and forth to make data changes and issue commands. The frontend is the one section of the tech stack that we have opted to still use HTTPS for data fetching. The server still serves the JSON files over HTTPS, and can be fetched with a relative URL such as: `/data/ROVER.json`.
+Throughout the infrastructure, you'll note that we primarily use UDP sockets to communicate back and forth to make data changes and issue commands. The frontend is the one section of the tech stack that we have opted to still use HTTPS for data fetching. The server still serves the JSON files over HTTPS, and can be fetched with a relative URL such as: `/data/EVA.json`.
 
-The frontend JavaScript fetches the three JSON files: `ROVER.json`, `EVA.json`, and `LTV.json` every second. A snippet of that code is referenced here:
+The frontend JavaScript fetches the JSON file `EVA.json` every second. A snippet of that code is referenced here:
 
 ```js
 // Fetch fresh data from the backend every one second
@@ -124,35 +118,17 @@ _Image Credit: <a href="https://www.cs.dartmouth.edu/~campbell/cs60/socketprogra
 
 - `data.c`: Majority of the data handling, processing UDP requests, routing to JSON files, other data helpers, etc
 - `network.c`: Core networking functionality, creating socket connections, etc
-- `server.c`: Sets up the frontend HTTP server, UDP sockets, sim engine, and other helper functions to communicate with DUST and peripherals.
+- `server.c`: Sets up the frontend HTTP server, UDP sockets, sim engine, and other helper functions to communicate with peripherals.
 
 ### Data handling
 
 Requests to change a value can be done over HTTP (from the frontend) or via UDP (peripherals, student devices, etc). In both cases, they are eventually converted into a string format that represents a file name and field path to update the resulting JSON field with a new value. For example, if someone flips the EVA 1 power switch on the physical UIA, it will send a UDP packet to the server with the command number `2003`, this command number will be converted to a data path based on the hard coded table found in <a href="/src/data.h">data.h: udp_command_mappings</a>, in this case that would be `eva.uia.eva1_power`. This is a very similar mechanism done in reverse to the frontend data update code highlighted above.
 
-### DUST connection
-
-Since TSS is a proxy for commands to the DUST pressurized rover simulation, we need to constantly transmit rover values to the Unreal Engine. This is done first by having the DUST instance connect to the same server address, after which it will send a UDP packet to the server with the command number 3000 indicating that it wants to register with TSS. The server will then process this request and save the IP address of the DUST instance so that it can send UDP packets back to DUST (see the function tss_to_unreal in `server.c`) to change the throttle, brakes, etc. A snippet of that code from `server.c` is included below:
-
-```c
-} else if (command == 3000) {  // Unreal Engine registration (DUST simulation)
-
-// Set the Unreal Engine IP address so that can forward commands like brakes and throttle to the simulation
-unreal_addr = client->udp_addr;
-unreal_addr_len = client->address_length;
-unreal = true;
-
-printf("Unreal address set to %s:%d\n", inet_ntoa(client->udp_addr.sin_addr),
-ntohs(client->udp_addr.sin_port));
-
-drop_udp_client(&udp_clients, client);
-```
-
 ## Telemetry Simulation Development
 
 ### Overview
 
-A simulation engine was developed in C to help create a realistic scenario that incorporated the live telemetry values from the rover and EVA (primarily location and speed), and create complex relationships with various other biometrics and environmental values.
+A simulation engine was developed in C to help create a realistic scenario that incorporated the live telemetry values from the EVA, and create complex relationships with various other biometrics and environmental values.
 
 The code for the library can be found in <a href="/src/lib/simulation">src/lib/simulation</a>. It is divided into two main files, `sim_algorithms.c` which specifies the supported algorithms for the simulation, and `sim_engine.c` which includes all of the helper functions and main code to initiate a simulation (this is called upon within the backend server to create a new simulation instance).
 
@@ -168,44 +144,46 @@ The first three are quite basic and used for extremely simple time based telemet
 
 ### Configuration
 
-Instead of hardcoding every field that we wanted to simulate, we opted to create a format that was easily configurable. This took the form of JSON files that live within a <a href="/src/lib/simulation/config">config folder</a> in the root of the simulation library folder. Each file is representative of a single "component" that you want to simulate; in our case that would be `rover`, `eva1`, and `eva2`. Below is an example of a config file with some of the supported algorithms mentioned above:
+Instead of hardcoding every field that we wanted to simulate, we opted to create a format that was easily configurable. This took the form of JSON files that live within a <a href="/src/lib/simulation/config">config folder</a> in the root of the simulation library folder. Each file is representative of a single "component" that you want to simulate; in our case that would be `eva1` and `eva2`. Below is an example of a config file with some of the supported algorithms mentioned above:
 
-NOTE: For custom algorithms, to support order of operations with parentheses, the parser was implented with the expectation that everything would have a space in between it including parentheses. For example, you would write an equation like so: `( external_temp * 2 ) + 16
+NOTE: For custom algorithms, to support order of operations with parentheses, the parser was implemented with the expectation that everything would have a space in between it including parentheses. For example, you would write an equation like so: `( external_temp * 2 ) + 16
 
 ```json
 {
-  "component_name": "rover",
+  "component_name": "eva1",
   "fields": {
-    "cabin_heating": {
+    "primary_battery_level": {
       "type": "float",
-      "algorithm": "external_value",
-      "file_path": "ROVER.json",
-      "field_path": "pr_telemetry.cabin_heating"
+      "algorithm": "linear_decay",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "rate": 0.05,
+      "start_value": 100.0
+      
     },
-    "cabin_temperature": {
+    "secondary_battery_level": {
       "type": "float",
-      "algorithm": "dependent_value",
-      "formula": "external_temp * 0.15 + sunlight * 8.0 + cabin_heating * 15.0 - cabin_cooling * 10.0 + 20.0",
-      "depends_on": [
-        "external_temp",
-        "sunlight",
-        "cabin_heating",
-        "cabin_cooling"
-      ]
+      "algorithm": "linear_decay",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "rate": 0.05,
+      "start_value": 100.0
     },
-    "coolant_pressure": {
+    "oxy_pri_storage": {
       "type": "float",
-      "algorithm": "sine_wave",
-      "base_value": 500.0,
-      "amplitude": 2.0,
-      "frequency": 0.01
+      "algorithm": "linear_decay",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "rate": 0.013,
+      "start_value": 100.0
     },
-    "rover_elapsed_time": {
+    "oxy_sec_storage": {
       "type": "float",
-      "algorithm": "linear_growth",
-      "start_value": 0,
-      "end_value": 1350,
-      "duration_seconds": 1350.0
+      "algorithm": "linear_decay",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "rate": 0.013,
+      "start_value": 100.0
     }
   }
 }
